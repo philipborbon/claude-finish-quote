@@ -1,0 +1,1 @@
+{ "name": "finish-quote", "version": "0.1.0", "description": "Shows a random dwyl/quotes quote under the turn-end (Churned) line when a turn really finishes", "types": "./types/index.d.ts" }

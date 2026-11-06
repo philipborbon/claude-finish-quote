@@ -1,0 +1,13 @@
+{
+  "name": "claude-finish-quote",
+  "description": "A Claude Code mod that shows a random quote under the turn-end line when a turn finishes",
+  "owner": {
+    "name": "Philip Borbon"
+  },
+  "plugins": [
+    {
+      "name": "finish-quote",
+      "source": "./"
+    }
+  ]
+}
