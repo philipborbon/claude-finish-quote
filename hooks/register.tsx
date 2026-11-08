@@ -9,10 +9,15 @@ const SOURCE = 'https://raw.githubusercontent.com/dwyl/quotes/main/quotes.json'
 const REFRESH_MS = 7 * 24 * 60 * 60 * 1000
 // Quotes kept for scrolling back; older turns lose theirs.
 const KEEP = 200
-// How far the line's duration may differ from turn.complete's and still be the same turn.
+// How far the line's duration may differ from turn.complete's and still surely be the same turn.
 const MATCH_MS = 1500
 
+// The line counts from the person's last prompt, while turn.complete counts from the turn's
+// own start. They differ when a background-agent notification resumed the turn, so a line
+// also matches the time since the last prompt.
+
 const quotes = atom({ plugin: 'finish-quote', key: 'quotes' } as const, [] as FinishQuote[])
+const lastPromptAt = atom({ plugin: 'finish-quote', key: 'lastPromptAt' } as const, 0)
 
 type Raw = { text?: unknown; author?: unknown }
 type Cache = { fetchedAt: number; quotes: string[] }
@@ -60,6 +65,24 @@ const pick = async ($: EngineInterface) => {
   return c.quotes[Math.floor(Math.random() * c.quotes.length)]
 }
 
+// The entry a duration line belongs to: the closest of its turn's duration or the time
+// since the prompt, within MATCH_MS.
+const match = (list: readonly FinishQuote[], lineMs: number) => {
+  let best: FinishQuote | undefined
+  let bestDiff = Infinity
+  for (const q of list) {
+    for (const ms of [q.durationMs, q.sincePromptMs]) {
+      if (ms === undefined) continue
+      const diff = Math.abs(ms - lineMs)
+      if (diff <= MATCH_MS && diff < bestDiff) {
+        best = q
+        bestDiff = diff
+      }
+    }
+  }
+  return best
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
@@ -67,27 +90,36 @@ export const register: Register = on => {
     return result
   })
 
+  on('prompt.submit', async ($, e, next) => {
+    const result = await next(e)
+    if (e.isMeta !== true) {
+      const now = await $.clock.now()
+      await update($, lastPromptAt, () => now)
+    }
+    return result
+  })
+
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
-    if (e.agentId === undefined && !e.isAborted && !isQuestion(e.answer)) {
-      const quote = await pick($).catch(() => undefined)
-      if (quote !== undefined) {
-        const entry: FinishQuote = { turnId: e.turnId, durationMs: e.durationMs, quote }
-        await update($, quotes, list => [...list, entry].slice(-KEEP))
-      }
+    if (e.agentId !== undefined) return result
+    const getsQuote = !e.isAborted && !isQuestion(e.answer)
+    const quote = getsQuote ? await pick($).catch(() => undefined) : undefined
+    const now = await $.clock.now()
+    const promptAt = await read($, lastPromptAt)
+    const entry: FinishQuote = {
+      turnId: e.turnId,
+      durationMs: e.durationMs,
+      ...(quote !== undefined ? { quote } : {}),
+      ...(promptAt > 0 && now >= promptAt ? { sincePromptMs: now - promptAt } : {}),
     }
+    await update($, quotes, list => [...list, entry].slice(-KEEP))
     return result
   })
 
   on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
     if (e.props.waitingFor !== undefined) return next(e)
-    const list = await read($, quotes)
-    let best: FinishQuote | undefined
-    for (const q of list) {
-      const diff = Math.abs(q.durationMs - e.props.durationMs)
-      if (diff <= MATCH_MS && (best === undefined || diff < Math.abs(best.durationMs - e.props.durationMs))) best = q
-    }
-    if (best === undefined) return next(e)
+    const best = match(await read($, quotes), e.props.durationMs)
+    if (best?.quote === undefined) return next(e)
 
     const { Box, Text } = $.ui.resolve(e)
     return (
