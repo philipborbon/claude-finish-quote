@@ -10,7 +10,7 @@ const LINE = (durationMs: number) => ({
 }) as const
 
 // Stands for the engine: the network serves dwyl's list, the store is kept in memory.
-const engine = (on: any, opts: { online?: boolean; clock?: { now: number } } = {}) => {
+const engine = (on: any, opts: { online?: boolean; clock?: { now: number }; line?: string } = {}) => {
   const store = new Map<string, unknown>()
   const fetches: string[] = []
   on('clock.now', () => ({ value: opts.clock?.now ?? 1_000_000 }))
@@ -25,7 +25,7 @@ const engine = (on: any, opts: { online?: boolean; clock?: { now: number } } = {
   on('turn.complete', (_: unknown, e: any) => ({ text: e.answer }))
   on('ui.render', ($: any, e: any) => {
     const { Text } = $.ui.resolve(e)
-    return <Text>Churned for 2m 20s</Text>
+    return <Text>{opts.line ?? 'Churned for 2m 20s'}</Text>
   })
   return { store, fetches }
 }
@@ -101,6 +101,39 @@ test('a line counted from the prompt does not take a quote from a turn that aske
   await $.turn.complete(turn('Which option?', { turnId: 't1', durationMs: 60_000 }))
 
   const ui = await $.ui.mount(LINE(60_000) as any)
+  expect(await ui.find({ type: 'Text', text: /Keep going/ })).toBe(undefined)
+  await ui.unmount()
+})
+
+test('a "· done" line no recorded turn matches still gets a quote', async ($, on) => {
+  engine(on, { line: 'Baked for 11m 55s · done 5:37 AM' })
+  await $.turn.complete(turn('All done.'))
+  const ui = await $.ui.mount(LINE(715_000) as any)
+  expect((await ui.find({ type: 'Text', text: /Baked/ }))?.text).toBe('Baked for 11m 55s · done 5:37 AM')
+  expect((await ui.find({ type: 'Text', text: /Keep going/ }))?.text).toBe('$ "Keep going." — Someone')
+  await ui.unmount()
+})
+
+test('a plain done line no recorded turn matches still gets a quote', async ($, on) => {
+  engine(on)
+  await $.turn.complete(turn('All done.', { durationMs: 10_000 }))
+  const ui = await $.ui.mount(LINE(140_000) as any)
+  expect((await ui.find({ type: 'Text', text: /Keep going/ }))?.text).toBe('$ "Keep going." — Someone')
+  await ui.unmount()
+})
+
+test('a done line matching a turn that asked a question gets no quote', async ($, on) => {
+  engine(on, { line: 'Baked for 2m 20s · done 5:37 AM' })
+  await $.turn.complete(turn('Done.\n\nShall I continue?'))
+  const ui = await $.ui.mount(LINE(140_000) as any)
+  expect(await ui.find({ type: 'Text', text: /Keep going/ })).toBe(undefined)
+  await ui.unmount()
+})
+
+test('a waiting line gets no quote', async ($, on) => {
+  engine(on, { line: 'Waiting for 2 background agents to finish' })
+  await $.turn.complete(turn('All done.', { durationMs: 10_000 }))
+  const ui = await $.ui.mount(LINE(140_000) as any)
   expect(await ui.find({ type: 'Text', text: /Keep going/ })).toBe(undefined)
   await ui.unmount()
 })

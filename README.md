@@ -10,6 +10,8 @@ $ "Creativity comes from trust." — Rita Mae Brown
 
 ```
 
+- A real finish is a turn-end line of the form `{Word} for {duration}`, with or without
+  `· done {time}` after it (`✻ Baked for 11m 55s · done 5:37 AM`, `✻ Churned for 2m 20s`).
 - Shown only on real finishes: not when the reply ends with a question, when the turn was
   interrupted, for subagent turns, or while background work is still running.
 - Each quote stays with its own turn when you scroll back.

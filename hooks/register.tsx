@@ -83,6 +83,25 @@ const match = (list: readonly FinishQuote[], lineMs: number) => {
   return best
 }
 
+// Flattens a drawn line to its text.
+const textOf = (node: unknown): string => {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(textOf).join('')
+  if (node !== null && typeof node === 'object' && 'children' in node) {
+    return textOf((node as { children?: unknown }).children ?? [])
+  }
+  return ''
+}
+
+// How Claude Code reports a finished turn: "{PastTenseVerb} for {duration}", optionally
+// "· done {clock time}" after it, e.g. "Baked for 11m 55s · done 5:37 AM" or
+// "Churned for 2m 20s". "Waiting for …" lines are not finishes.
+const DONE_LINE = /^[^\p{L}]*\p{L}+ for (?:\d+d\s*)?(?:\d+h\s*)?(?:\d+m\s*)?(?:\d+(?:\.\d+)?s|\d+[hm])\b(?:.*·\s*done\b.*)?/iu
+const isDoneLine = (text: string) => {
+  const line = text.trim()
+  return !/^[^\p{L}]*waiting\b/iu.test(line) && DONE_LINE.test(line)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
@@ -118,15 +137,26 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
     if (e.props.waitingFor !== undefined) return next(e)
+    const original = await next(e)
     const best = match(await read($, quotes), e.props.durationMs)
-    if (best?.quote === undefined) return next(e)
+    let quote: string | undefined
+    if (best !== undefined) {
+      // A recorded turn decides: no quote when it asked a question or was interrupted.
+      quote = best.quote
+    } else if (isDoneLine(textOf(original))) {
+      // A true-done line no recorded turn matched: a quote fixed by the line's duration, so
+      // scrolling back shows the same one.
+      const c = await cached($)
+      quote = c === undefined ? undefined : c.quotes[Math.floor(e.props.durationMs) % c.quotes.length]
+    }
+    if (quote === undefined) return original
 
     const { Box, Text } = $.ui.resolve(e)
     return (
       <Box flexDirection="column">
-        {await next(e)}
+        {original}
         <Box marginTop={1} marginBottom={1}>
-          <Text dimColor>$ {best.quote}</Text>
+          <Text dimColor>$ {quote}</Text>
         </Box>
       </Box>
     )
